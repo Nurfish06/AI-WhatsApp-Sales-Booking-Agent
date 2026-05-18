@@ -1,0 +1,106 @@
+{
+  "name": "06_Notification_Service",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "x1y2z3a4-1111-2222-3333-444455556666",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{$json[\"channel\"]}}",
+        "rules": {
+          "rules": [
+            {
+              "value2": "slack",
+              "output": 0
+            },
+            {
+              "value2": "email",
+              "output": 1
+            }
+          ]
+        }
+      },
+      "id": "y2z3a4b5-2222-3333-4444-555566667777",
+      "name": "Route by Channel",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "webhookUri": "={{$json[\"slack_url\"]}}",
+        "text": "={{$json[\"message\"]}}",
+        "options": {}
+      },
+      "id": "z3a4b5c6-3333-4444-5555-666677778888",
+      "name": "Send Slack Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [600, 200],
+      "credentials": {
+        "slackApi": {
+          "id": "SLACK_CREDENTIALS",
+          "name": "Slack Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "notifications@agent.local",
+        "toEmail": "={{$json[\"email_address\"]}}",
+        "subject": "={{$json[\"subject\"]}}",
+        "text": "={{$json[\"message\"]}}",
+        "options": {}
+      },
+      "id": "a4b5c6d7-4444-5555-6666-777788889999",
+      "name": "Send Email Alert",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [600, 400],
+      "credentials": {
+        "smtp": {
+          "id": "SMTP_CREDENTIALS",
+          "name": "SMTP Account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "Route by Channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Channel": {
+      "main": [
+        [
+          {
+            "node": "Send Slack Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Email Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {}
+}

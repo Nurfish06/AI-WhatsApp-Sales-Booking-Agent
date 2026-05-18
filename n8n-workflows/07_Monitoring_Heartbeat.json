@@ -1,0 +1,153 @@
+{
+  "name": "07_Monitoring_Heartbeat",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "b5c6d7e8-1111-2222-3333-444455556666",
+      "name": "Schedule Trigger (5m)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT 1 as health_check;",
+        "options": {}
+      },
+      "id": "c6d7e8f9-2222-3333-4444-555566667777",
+      "name": "Ping Postgres",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.1,
+      "position": [400, 300],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIALS",
+          "name": "Postgres Account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://api.openai.com/v1/models",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "d7e8f9g0-3333-4444-5555-666677778888",
+      "name": "Ping OpenAI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [600, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "OPENAI_API_HEADER",
+          "name": "OpenAI Auth Header"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json[\"error\"] ? true : false}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "e8f9g0h1-4444-5555-6666-777788889999",
+      "name": "Check Failures",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [800, 300]
+    },
+    {
+      "parameters": {
+        "workflowId": "REPLACE_WITH_NOTIFICATION_SERVICE_ID"
+      },
+      "id": "f9g0h1i2-5555-6666-7777-888899990000",
+      "name": "Trigger Notification",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1000, 200]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger (5m)": {
+      "main": [
+        [
+          {
+            "node": "Ping Postgres",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ping Postgres": {
+      "main": [
+        [
+          {
+            "node": "Ping OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "error": [
+        [
+          {
+            "node": "Ping OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ping OpenAI": {
+      "main": [
+        [
+          {
+            "node": "Check Failures",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "error": [
+        [
+          {
+            "node": "Check Failures",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Failures": {
+      "main": [
+        [
+          {
+            "node": "Trigger Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {}
+}
