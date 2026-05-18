@@ -1,0 +1,109 @@
+{
+  "name": "03_Qualification_Scorer",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "e1f2g3h4-1111-2222-3333-444455556666",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json[\"intent\"]}}",
+              "value2": "booking_request"
+            }
+          ]
+        }
+      },
+      "id": "f2g3h4i5-2222-3333-4444-555566667777",
+      "name": "Check Intent",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "number": [
+            {
+              "name": "lead_score",
+              "value": 85
+            }
+          ],
+          "string": [
+            {
+              "name": "lead_status",
+              "value": "hot"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "g3h4i5j6-3333-4444-5555-666677778888",
+      "name": "Calculate Score (Rule-Based)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [600, 200]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE conversations SET lead_score = $1, lead_status = $2 WHERE id = $3;",
+        "options": {}
+      },
+      "id": "h4i5j6k7-4444-5555-6666-777788889999",
+      "name": "Update DB Lead Score",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.1,
+      "position": [800, 200],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIALS",
+          "name": "Postgres Account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "Check Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Intent": {
+      "main": [
+        [
+          {
+            "node": "Calculate Score (Rule-Based)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Score (Rule-Based)": {
+      "main": [
+        [
+          {
+            "node": "Update DB Lead Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {}
+}
