@@ -45,7 +45,7 @@ services:
     container_name: agent_n8n
     restart: unless-stopped
     ports:
-      - "5678:5678"
+      - "5679:5678"
     environment:
       - DB_TYPE=postgresdb
       - DB_POSTGRESDB_DATABASE=${POSTGRES_DB:-whatsapp_agent_db}

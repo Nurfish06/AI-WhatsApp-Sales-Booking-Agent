@@ -1,0 +1,65 @@
+{
+  "name": "01_Main_Router",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "twilio-inbound",
+        "options": {}
+      },
+      "id": "e98e2dc4-1b12-421a-8c7e-1234567890ab",
+      "name": "Twilio Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "twilio-inbound-webhook"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM clients WHERE twilio_number = $1 AND is_active = true;",
+        "options": {}
+      },
+      "id": "d1c2b3a4-5678-90ab-cdef-1234567890ab",
+      "name": "Lookup Client",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "workflowId": "REPLACE_WITH_CONVERSATION_ENGINE_ID"
+      },
+      "id": "f8a9b0c1-2345-6789-abcd-1234567890ab",
+      "name": "Execute Conversation Engine",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [650, 300]
+    }
+  ],
+  "connections": {
+    "Twilio Webhook": {
+      "main": [
+        [
+          {
+            "node": "Lookup Client",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lookup Client": {
+      "main": [
+        [
+          {
+            "node": "Execute Conversation Engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {}
+}

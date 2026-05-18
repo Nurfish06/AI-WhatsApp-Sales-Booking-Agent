@@ -1,0 +1,80 @@
+{
+  "name": "04_Calendar_Booking",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "aa11bb22-3333-4444-5555-666677778888",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "resource": "event",
+        "operation": "create",
+        "calendar": "primary",
+        "start": "={{$json[\"appointment_start\"]}}",
+        "end": "={{$json[\"appointment_end\"]}}",
+        "summary": "={{$json[\"service_type\"]}} - {{$json[\"customer_name\"]}}",
+        "options": {
+          "description": "Lead Score: {{$json[\"lead_score\"]}} | Phone: {{$json[\"customer_phone\"]}}"
+        }
+      },
+      "id": "bb22cc33-4444-5555-6666-777788889999",
+      "name": "Google Calendar: Create Event",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1,
+      "position": [400, 300],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "GOOGLE_CALENDAR_CREDENTIALS",
+          "name": "Google Calendar Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO bookings (conversation_id, client_id, customer_phone, appointment_start, appointment_end, calendar_event_id, status) VALUES ($1, $2, $3, $4, $5, $6, 'confirmed');",
+        "options": {}
+      },
+      "id": "cc33dd44-5555-6666-7777-888899990000",
+      "name": "Save Booking to DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.1,
+      "position": [600, 300],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIALS",
+          "name": "Postgres Account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "Google Calendar: Create Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Calendar: Create Event": {
+      "main": [
+        [
+          {
+            "node": "Save Booking to DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {}
+}
