@@ -1,0 +1,86 @@
+{
+  "name": "08_Monthly_Report_Generator",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "months",
+              "triggerAtDayOfMonth": 1,
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "x9y8z7a6-1111-2222-3333-444455556666",
+      "name": "Cron (1st of Month)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT client_id, COUNT(*) as total_leads, SUM(CASE WHEN lead_status = 'hot' THEN 1 ELSE 0 END) as hot_leads FROM conversations WHERE created_at >= date_trunc('month', current_date - interval '1' month) GROUP BY client_id;",
+        "options": {}
+      },
+      "id": "y8z7a6b5-2222-3333-4444-555566667777",
+      "name": "Fetch Monthly Stats",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.1,
+      "position": [400, 300],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIALS",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "reports@agent.local",
+        "toEmail": "admin@agent.local",
+        "subject": "Monthly Agent Performance Report",
+        "text": "={{$json}}",
+        "options": {}
+      },
+      "id": "z7a6b5c4-3333-4444-5555-666677778888",
+      "name": "Send Email Report",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [600, 300],
+      "credentials": {
+        "smtp": {
+          "id": "SMTP_CREDENTIALS",
+          "name": "SMTP Account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Cron (1st of Month)": {
+      "main": [
+        [
+          {
+            "node": "Fetch Monthly Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Monthly Stats": {
+      "main": [
+        [
+          {
+            "node": "Send Email Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {}
+}
