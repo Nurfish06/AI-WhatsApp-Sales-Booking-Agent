@@ -1,0 +1,106 @@
+{
+  "info": {
+    "name": "AI WhatsApp Sales & Booking Agent",
+    "description": "Collection for testing n8n webhooks, OpenAI, and Twilio endpoints for the AI WhatsApp Agent.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Local n8n Webhooks",
+      "item": [
+        {
+          "name": "Simulate Twilio Inbound Webhook",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              },
+              {
+                "key": "X-Twilio-Signature",
+                "value": "mock_signature_for_testing"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "MessageSid", "value": "SMtesting1234567890abcdef" },
+                { "key": "From", "value": "whatsapp:+1234567890" },
+                { "key": "To", "value": "whatsapp:+0987654321" },
+                { "key": "Body", "value": "I need to book an appointment for teeth cleaning." },
+                { "key": "NumMedia", "value": "0" }
+              ]
+            },
+            "url": {
+              "raw": "http://localhost:5678/webhook-test/twilio-inbound",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "5678",
+              "path": ["webhook-test", "twilio-inbound"]
+            }
+          }
+        },
+        {
+          "name": "Simulate Twilio Status Callback",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "MessageSid", "value": "SMtesting1234567890abcdef" },
+                { "key": "MessageStatus", "value": "delivered" },
+                { "key": "To", "value": "whatsapp:+1234567890" },
+                { "key": "From", "value": "whatsapp:+0987654321" }
+              ]
+            },
+            "url": {
+              "raw": "http://localhost:5678/webhook-test/twilio-status",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "5678",
+              "path": ["webhook-test", "twilio-status"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "External API Tests",
+      "item": [
+        {
+          "name": "OpenAI Chat Completion Test",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{OPENAI_API_KEY}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"gpt-4o\",\n  \"temperature\": 0.3,\n  \"max_tokens\": 300,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a helpful assistant. Reply in JSON format like {'intent': '...', 'reply': '...'} .\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"I'd like to book an appointment.\"\n    }\n  ],\n  \"response_format\": { \"type\": \"json_object\" }\n}"
+            },
+            "url": {
+              "raw": "https://api.openai.com/v1/chat/completions",
+              "protocol": "https",
+              "host": ["api", "openai", "com"],
+              "path": ["v1", "chat", "completions"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
