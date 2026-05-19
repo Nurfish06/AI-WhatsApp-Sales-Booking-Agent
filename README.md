@@ -170,15 +170,4 @@ Tests cover: health checks, Twilio signature validation, prompt injection, opt-o
 
 ---
 
-## 📄 Full Documentation
-
-| Document | Description |
-|----------|-------------|
-| [`docs/DEPLOYMENT_GUIDE.md`](docs/DEPLOYMENT_GUIDE.md) | Complete setup, credentials, import steps, go-live checklist |
-| `docs/PROJECT_LIVING_DOC.md` | Changelog and current project state *(private)* |
-| `docs/n8n Workflow Specifications.md` | Happy/failure path specs for all 9 workflows *(private)* |
-| `AGENTS.md` | Rules for AI coding assistants *(private)* |
-
----
-
 *Production-ready. Built with n8n + OpenAI + Twilio. Self-hosted, multi-tenant, GDPR-compliant.*
