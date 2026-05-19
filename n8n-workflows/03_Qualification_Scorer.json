@@ -3,83 +3,92 @@
   "nodes": [
     {
       "parameters": {},
-      "id": "e1f2g3h4-1111-2222-3333-444455556666",
+      "id": "trigger",
       "name": "Execute Workflow Trigger",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1,
-      "position": [
-        200,
-        300
-      ]
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.item.json.collected_data || {};\nconst hasData = Object.values(data).some(v => v !== null && v !== \"\");\nreturn { hasData: hasData };"
+      },
+      "id": "check-empty",
+      "name": "Check Empty Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [200, 300]
     },
     {
       "parameters": {
         "conditions": {
-          "string": [
+          "boolean": [
             {
-              "value1": "={{$json[\"intent\"]}}",
-              "value2": "booking_request"
+              "value1": "={{ $json.hasData }}",
+              "value2": true
             }
           ]
         }
       },
-      "id": "f2g3h4i5-2222-3333-4444-555566667777",
-      "name": "Check Intent",
+      "id": "if-empty",
+      "name": "IF Data Present",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
-      "position": [
-        400,
-        300
-      ]
+      "position": [400, 300]
     },
     {
       "parameters": {
-        "keepOnlySet": true,
-        "values": {
-          "number": [
+        "jsCode": "return {\n  lead_status: \"unqualified\",\n  lead_score: 0,\n  next_action: \"escalate_or_info\"\n};"
+      },
+      "id": "return-unqualified",
+      "name": "Return Unqualified",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [600, 100]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
             {
-              "name": "lead_score",
-              "value": 85
-            }
-          ],
-          "string": [
-            {
-              "name": "lead_status",
-              "value": "hot"
+              "value1": "={{ !!$('Execute Workflow Trigger').item.json.client_config?.scoring_thresholds }}",
+              "value2": true
             }
           ]
-        },
-        "options": {}
+        }
       },
-      "id": "g3h4i5j6-3333-4444-5555-666677778888",
-      "name": "Calculate Score (Rule-Based)",
-      "type": "n8n-nodes-base.set",
+      "id": "if-config",
+      "name": "IF Scoring Config Exists",
+      "type": "n8n-nodes-base.if",
       "typeVersion": 1,
-      "position": [
-        600,
-        200
-      ]
+      "position": [600, 500]
     },
     {
       "parameters": {
-        "operation": "executeQuery",
-        "query": "UPDATE conversations SET lead_score = $1, lead_status = $2 WHERE id = $3;",
-        "options": {}
+        "operation": "execute",
+        "command": "={{ 'LPUSH audit_logs \"WARNING: Missing scoring configuration for client ID ' + $('Execute Workflow Trigger').item.json.client_id + '\"' }}"
       },
-      "id": "h4i5j6k7-4444-5555-6666-777788889999",
-      "name": "Update DB Lead Score",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.1,
-      "position": [
-        800,
-        200
-      ],
+      "id": "log-missing-config",
+      "name": "Log Missing Config",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [800, 400],
       "credentials": {
-        "postgres": {
-          "id": "POSTGRES_CREDENTIALS",
-          "name": "Postgres Account"
+        "redis": {
+          "id": "REDIS_CREDENTIALS",
+          "name": "Redis account"
         }
       }
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $('Execute Workflow Trigger').item.json;\nconst collectedData = input.collected_data || {};\nconst scoringRules = input.client_config?.scoring_rules || {};\nconst thresholds = input.client_config?.scoring_thresholds || { hot: 80, warm: 50 };\nconst configIncomplete = !input.client_config?.scoring_thresholds;\n\nlet totalScore = 0;\n\nfor (const [key, value] of Object.entries(collectedData)) {\n  if (value && scoringRules[key]) {\n    const weight = scoringRules[key].weight || 0;\n    const pointValue = scoringRules[key].values ? (scoringRules[key].values[value] || 0) : 0;\n    totalScore += (weight * pointValue);\n  }\n}\n\nlet status = \"cold\";\nlet nextAction = \"continue_qualifying\";\n\nif (totalScore >= thresholds.hot) {\n  status = \"hot\";\n  nextAction = \"route_to_booking\";\n} else if (totalScore >= thresholds.warm) {\n  status = \"warm\";\n}\n\nreturn {\n  lead_status: status,\n  lead_score: totalScore,\n  next_action: nextAction,\n  config_incomplete: configIncomplete\n};"
+      },
+      "id": "calculate-score",
+      "name": "Calculate Rule-Based Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [1000, 500]
     }
   ],
   "connections": {
@@ -87,29 +96,65 @@
       "main": [
         [
           {
-            "node": "Check Intent",
+            "node": "Check Empty Data",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Check Intent": {
+    "Check Empty Data": {
       "main": [
         [
           {
-            "node": "Calculate Score (Rule-Based)",
+            "node": "IF Data Present",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Calculate Score (Rule-Based)": {
+    "IF Data Present": {
       "main": [
         [
           {
-            "node": "Update DB Lead Score",
+            "node": "IF Scoring Config Exists",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Unqualified",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Scoring Config Exists": {
+      "main": [
+        [
+          {
+            "node": "Calculate Rule-Based Score",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Missing Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Missing Config": {
+      "main": [
+        [
+          {
+            "node": "Calculate Rule-Based Score",
             "type": "main",
             "index": 0
           }

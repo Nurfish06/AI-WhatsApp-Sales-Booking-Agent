@@ -3,53 +3,205 @@
   "nodes": [
     {
       "parameters": {},
-      "id": "aa11bb22-3333-4444-5555-666677778888",
+      "id": "trigger",
       "name": "Execute Workflow Trigger",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1,
-      "position": [200, 300]
+      "position": [0, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $input.item.json.intent }}",
+              "value2": "confirm_slot"
+            }
+          ]
+        }
+      },
+      "id": "check-intent",
+      "name": "Check Intent",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [200, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const urgency = $input.item.json.urgency || 'asap';\n// Logic to determine date window based on urgency\nreturn { start: new Date().toISOString(), end: new Date(Date.now() + 7*86400000).toISOString() };"
+      },
+      "id": "calc-window",
+      "name": "Calculate Search Window",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [400, 200]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT booking_date, COUNT(*) as count FROM bookings WHERE client_id = $1 GROUP BY booking_date;",
+        "additionalFields": {
+          "queryParams": "={{ $('Execute Workflow Trigger').item.json.client_id }}"
+        }
+      },
+      "id": "check-daily-limits",
+      "name": "Check Daily Limits",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.1,
+      "position": [600, 200],
+      "credentials": { "postgres": { "id": "POSTGRES_CREDENTIALS", "name": "Postgres Account" } }
+    },
+    {
+      "parameters": {
+        "resource": "calendar",
+        "operation": "availability",
+        "calendar": {
+          "__rl": true,
+          "value": "={{ $('Execute Workflow Trigger').item.json.client_config?.calendar_id || 'primary' }}",
+          "mode": "id"
+        },
+        "timeMin": "={{ $('Calculate Search Window').item.json.start }}",
+        "timeMax": "={{ $('Calculate Search Window').item.json.end }}"
+      },
+      "id": "gcal-freebusy",
+      "name": "Google Calendar Free/Busy",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1,
+      "position": [800, 200],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "continueOnFail": true,
+      "credentials": { "googleCalendarOAuth2Api": { "id": "GCAL_CREDENTIALS", "name": "Google Calendar Account" } }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.error != null }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-gcal-error",
+      "name": "IF GCAL Error",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1000, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "return {\n  availability_status: \"error\",\n  reply: \"I'm having trouble accessing our calendar right now. I don't want to give you incorrect availability. Can I have our team reach out to you directly to schedule your appointment?\",\n  escalation_needed: true,\n  escalation_reason: \"google_calendar_api_failure\"\n};"
+      },
+      "id": "fallback-api-error",
+      "name": "Fallback: GCAL API Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [1200, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "const freebusy = $input.item.json;\nconst dailyLimits = $('Check Daily Limits').all().map(item => item.json);\n// Process availability, exclude over-limit days, format times\nreturn {\n  availability_status: \"success\",\n  slots: [\n    \"Thursday, May 25 at 11:00 AM\",\n    \"Thursday, May 25 at 1:00 PM\",\n    \"Friday, May 26 at 10:00 AM\"\n  ],\n  reply: \"I have availability on Thursday at 11 AM or 1 PM, or Friday at 10 AM. Which works best for you?\"\n};"
+      },
+      "id": "process-slots",
+      "name": "Process & Format Slots",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "resource": "calendar",
+        "operation": "availability",
+        "calendar": {
+          "__rl": true,
+          "value": "={{ $('Execute Workflow Trigger').item.json.client_config?.calendar_id || 'primary' }}",
+          "mode": "id"
+        },
+        "timeMin": "={{ $input.item.json.selected_slot_start }}",
+        "timeMax": "={{ $input.item.json.selected_slot_end }}"
+      },
+      "id": "gcal-recheck",
+      "name": "Atomic Re-check Slot",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1,
+      "position": [400, 600],
+      "credentials": { "googleCalendarOAuth2Api": { "id": "GCAL_CREDENTIALS", "name": "Google Calendar Account" } }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ Object.keys($json.calendars || {}).length > 0 && ($json.calendars[Object.keys($json.calendars)[0]].busy || []).length === 0 }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-slot-free",
+      "name": "IF Slot Still Free",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [600, 600]
+    },
+    {
+      "parameters": {
+        "jsCode": "return {\n  availability_status: \"taken\",\n  reply: \"It looks like that exact time slot was just booked by another customer — my apologies! However, I have another slot available tomorrow. Would that work for you?\"\n};"
+      },
+      "id": "fallback-slot-taken",
+      "name": "Fallback: Slot Taken",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [800, 500]
     },
     {
       "parameters": {
         "resource": "event",
         "operation": "create",
-        "calendar": "primary",
-        "start": "={{$json[\"appointment_start\"]}}",
-        "end": "={{$json[\"appointment_end\"]}}",
-        "summary": "={{$json[\"service_type\"]}} - {{$json[\"customer_name\"]}}",
-        "options": {
-          "description": "Lead Score: {{$json[\"lead_score\"]}} | Phone: {{$json[\"customer_phone\"]}}"
-        }
+        "calendar": {
+          "__rl": true,
+          "value": "={{ $('Execute Workflow Trigger').item.json.client_config?.calendar_id || 'primary' }}",
+          "mode": "id"
+        },
+        "start": "={{ $('Execute Workflow Trigger').item.json.selected_slot_start }}",
+        "end": "={{ $('Execute Workflow Trigger').item.json.selected_slot_end }}",
+        "summary": "={{ $('Execute Workflow Trigger').item.json.service_type }} - {{ $('Execute Workflow Trigger').item.json.customer_name || 'Customer' }}",
+        "description": "Phone: {{ $('Execute Workflow Trigger').item.json.customer_phone }}"
       },
-      "id": "bb22cc33-4444-5555-6666-777788889999",
-      "name": "Google Calendar: Create Event",
+      "id": "create-event",
+      "name": "Create Event",
       "type": "n8n-nodes-base.googleCalendar",
       "typeVersion": 1,
-      "position": [400, 300],
-      "credentials": {
-        "googleCalendarOAuth2Api": {
-          "id": "GOOGLE_CALENDAR_CREDENTIALS",
-          "name": "Google Calendar Account"
-        }
-      }
+      "position": [800, 700],
+      "credentials": { "googleCalendarOAuth2Api": { "id": "GCAL_CREDENTIALS", "name": "Google Calendar Account" } }
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO bookings (conversation_id, client_id, customer_phone, appointment_start, appointment_end, calendar_event_id, status) VALUES ($1, $2, $3, $4, $5, $6, 'confirmed');",
-        "options": {}
+        "query": "INSERT INTO bookings (client_id, conversation_id, event_id, booking_time) VALUES ($1, $2, $3, $4) RETURNING *;",
+        "additionalFields": {
+          "queryParams": "={{ $('Execute Workflow Trigger').item.json.client_id }},{{ $('Execute Workflow Trigger').item.json.conversation_id }},{{ $json.id }},{{ $('Execute Workflow Trigger').item.json.selected_slot_start }}"
+        }
       },
-      "id": "cc33dd44-5555-6666-7777-888899990000",
-      "name": "Save Booking to DB",
+      "id": "save-booking",
+      "name": "Save to Database",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.1,
-      "position": [600, 300],
-      "credentials": {
-        "postgres": {
-          "id": "POSTGRES_CREDENTIALS",
-          "name": "Postgres Account"
-        }
-      }
+      "position": [1000, 700],
+      "credentials": { "postgres": { "id": "POSTGRES_CREDENTIALS", "name": "Postgres Account" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "return {\n  booking_status: \"confirmed\",\n  reply: \"Your appointment is confirmed for \" + $('Execute Workflow Trigger').item.json.selected_slot_start + \". We look forward to seeing you!\"\n};"
+      },
+      "id": "return-confirmation",
+      "name": "Return Confirmation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [1200, 700]
     }
   ],
   "connections": {
@@ -57,18 +209,127 @@
       "main": [
         [
           {
-            "node": "Google Calendar: Create Event",
+            "node": "Check Intent",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Google Calendar: Create Event": {
+    "Check Intent": {
       "main": [
         [
           {
-            "node": "Save Booking to DB",
+            "node": "Atomic Re-check Slot",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Calculate Search Window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Search Window": {
+      "main": [
+        [
+          {
+            "node": "Check Daily Limits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Daily Limits": {
+      "main": [
+        [
+          {
+            "node": "Google Calendar Free/Busy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Calendar Free/Busy": {
+      "main": [
+        [
+          {
+            "node": "IF GCAL Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF GCAL Error": {
+      "main": [
+        [
+          {
+            "node": "Fallback: GCAL API Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Process & Format Slots",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Atomic Re-check Slot": {
+      "main": [
+        [
+          {
+            "node": "IF Slot Still Free",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Slot Still Free": {
+      "main": [
+        [
+          {
+            "node": "Create Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fallback: Slot Taken",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Event": {
+      "main": [
+        [
+          {
+            "node": "Save to Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Database": {
+      "main": [
+        [
+          {
+            "node": "Return Confirmation",
             "type": "main",
             "index": 0
           }

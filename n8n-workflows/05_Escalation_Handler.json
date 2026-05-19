@@ -3,67 +3,146 @@
   "nodes": [
     {
       "parameters": {},
-      "id": "m1n2o3p4-1111-2222-3333-444455556666",
+      "id": "trigger",
       "name": "Execute Workflow Trigger",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1,
-      "position": [200, 300]
+      "position": [0, 300]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO escalations (conversation_id, trigger_reason, priority, escalated_to) VALUES ($1, $2, 'high', 'slack');",
-        "options": {}
+        "query": "SELECT id FROM escalations WHERE conversation_id = $1 AND status = 'awaiting_acknowledgment';",
+        "additionalFields": {
+          "queryParams": "={{ $input.item.json.conversation_id }}"
+        }
       },
-      "id": "n2o3p4q5-2222-3333-4444-555566667777",
-      "name": "Record Escalation",
+      "id": "check-duplicate",
+      "name": "Check Existing Escalation",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.1,
-      "position": [400, 300],
-      "credentials": {
-        "postgres": {
-          "id": "POSTGRES_CREDENTIALS",
-          "name": "Postgres Account"
-        }
-      }
+      "position": [200, 300],
+      "credentials": { "postgres": { "id": "POSTGRES_CREDENTIALS", "name": "Postgres Account" } }
     },
     {
       "parameters": {
-        "webhookUri": "={{$json[\"slack_webhook_url\"]}}",
-        "text": "🚨 Urgent Escalation: A customer requires human assistance.\n*Reason:* {{$json[\"escalation_reason\"]}}\n*Phone:* {{$json[\"customer_phone\"]}}",
-        "options": {}
-      },
-      "id": "o3p4q5r6-3333-4444-5555-666677778888",
-      "name": "Notify via Slack",
-      "type": "n8n-nodes-base.slack",
-      "typeVersion": 2,
-      "position": [600, 300],
-      "credentials": {
-        "slackApi": {
-          "id": "SLACK_CREDENTIALS",
-          "name": "Slack Account"
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ !!$json.id }}",
+              "value2": true
+            }
+          ]
         }
-      }
+      },
+      "id": "if-duplicate",
+      "name": "IF Duplicate Escalation",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE escalations SET notes = COALESCE(notes, '') || '\n[Additional Trigger]: ' || $1 WHERE id = $2;",
+        "additionalFields": {
+          "queryParams": "={{ $('Execute Workflow Trigger').item.json.escalation_reason }},{{ $json.id }}"
+        }
+      },
+      "id": "update-duplicate",
+      "name": "Silently Update DB (No Duplicate Alert)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.1,
+      "position": [600, 100],
+      "credentials": { "postgres": { "id": "POSTGRES_CREDENTIALS", "name": "Postgres Account" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $('Execute Workflow Trigger').item.json;\nlet priority = 'medium';\nif (input.escalation_reason.includes('legal_threat') || input.escalation_reason.includes('critical')) {\n  priority = 'critical';\n}\nreturn { \n  priority: priority, \n  holding_message: \"I want to make sure you get exactly what you need. Let me connect you with a team member who can help you personally. They'll be with you shortly.\",\n  event_type: \"escalation_triggered\",\n  context_data: {\n    phone: input.customer_phone,\n    reason: input.escalation_reason,\n    priority: priority,\n    conversation_id: input.conversation_id\n  }\n};"
+      },
+      "id": "format-holding",
+      "name": "Format Holding Details",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [600, 500]
     },
     {
       "parameters": {
         "resource": "message",
         "operation": "send",
-        "to": "={{$json[\"customer_phone\"]}}",
-        "from": "={{$json[\"twilio_number\"]}}",
-        "body": "Let me connect you with a human agent who can assist you further. They will get back to you shortly."
+        "to": "={{ $('Execute Workflow Trigger').item.json.customer_phone }}",
+        "from": "={{ $('Execute Workflow Trigger').item.json.twilio_number }}",
+        "body": "={{ $json.holding_message }}"
       },
-      "id": "p4q5r6s7-4444-5555-6666-777788889999",
+      "id": "send-twilio",
       "name": "Send Holding Message",
       "type": "n8n-nodes-base.twilio",
       "typeVersion": 1,
-      "position": [800, 300],
-      "credentials": {
-        "twilioApi": {
-          "id": "TWILIO_CREDENTIALS",
-          "name": "Twilio Account"
+      "position": [800, 500],
+      "credentials": { "twilioApi": { "id": "TWILIO_CREDENTIALS", "name": "Twilio Account" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO escalations (conversation_id, priority, status, reason) VALUES ($1, $2, 'awaiting_acknowledgment', $3) RETURNING *;",
+        "additionalFields": {
+          "queryParams": "={{ $('Execute Workflow Trigger').item.json.conversation_id }},{{ $('Format Holding Details').item.json.priority }},{{ $('Execute Workflow Trigger').item.json.escalation_reason }}"
         }
-      }
+      },
+      "id": "create-escalation",
+      "name": "Create Escalation Record",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.1,
+      "position": [1000, 500],
+      "credentials": { "postgres": { "id": "POSTGRES_CREDENTIALS", "name": "Postgres Account" } }
+    },
+    {
+      "parameters": {
+        "workflowId": "REPLACE_WITH_NOTIFICATION_SERVICE_ID",
+        "mode": "waitForResult",
+        "options": {}
+      },
+      "id": "call-notifications",
+      "name": "Call Notification Service",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1200, 500],
+      "retryOnFail": true,
+      "maxTries": 10,
+      "waitBetweenTries": 60000,
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.error != null }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-notification-fail",
+      "name": "IF Notification Failed (10 Retries)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1400, 500]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO dead_letter_queue (entity_type, entity_id, error_reason) VALUES ('escalation', $1, 'All notification channels failed after 10 retries');",
+        "additionalFields": {
+          "queryParams": "={{ $('Create Escalation Record').item.json.id }}"
+        }
+      },
+      "id": "dlq",
+      "name": "Add to Dead Letter Queue",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.1,
+      "position": [1600, 400],
+      "credentials": { "postgres": { "id": "POSTGRES_CREDENTIALS", "name": "Postgres Account" } }
     }
   ],
   "connections": {
@@ -71,29 +150,91 @@
       "main": [
         [
           {
-            "node": "Record Escalation",
+            "node": "Check Existing Escalation",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Record Escalation": {
+    "Check Existing Escalation": {
       "main": [
         [
           {
-            "node": "Notify via Slack",
+            "node": "IF Duplicate Escalation",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Notify via Slack": {
+    "IF Duplicate Escalation": {
+      "main": [
+        [
+          {
+            "node": "Silently Update DB (No Duplicate Alert)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Holding Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Holding Details": {
       "main": [
         [
           {
             "node": "Send Holding Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Holding Message": {
+      "main": [
+        [
+          {
+            "node": "Create Escalation Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Escalation Record": {
+      "main": [
+        [
+          {
+            "node": "Call Notification Service",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Notification Service": {
+      "main": [
+        [
+          {
+            "node": "IF Notification Failed (10 Retries)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Notification Failed (10 Retries)": {
+      "main": [
+        [
+          {
+            "node": "Add to Dead Letter Queue",
             "type": "main",
             "index": 0
           }

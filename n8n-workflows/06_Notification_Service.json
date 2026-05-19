@@ -3,72 +3,251 @@
   "nodes": [
     {
       "parameters": {},
-      "id": "x1y2z3a4-1111-2222-3333-444455556666",
+      "id": "trigger",
       "name": "Execute Workflow Trigger",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1,
-      "position": [200, 300]
+      "position": [0, 400]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT notification_preferences FROM client_configs WHERE client_id = $1;",
+        "additionalFields": {
+          "queryParams": "={{ $input.item.json.client_id || 'default' }}"
+        }
+      },
+      "id": "load-prefs",
+      "name": "Load Notification Prefs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.1,
+      "position": [200, 400],
+      "credentials": { "postgres": { "id": "POSTGRES_CREDENTIALS", "name": "Postgres Account" } }
     },
     {
       "parameters": {
         "dataType": "string",
-        "value1": "={{$json[\"channel\"]}}",
+        "value1": "={{ $input.item.json.event_type }}",
         "rules": {
           "rules": [
             {
-              "value2": "slack",
+              "value2": "escalation_triggered",
               "output": 0
             },
             {
-              "value2": "email",
+              "value2": "hot_lead_detected",
               "output": 1
+            },
+            {
+              "value2": "daily_summary",
+              "output": 2
             }
           ]
         }
       },
-      "id": "y2z3a4b5-2222-3333-4444-555566667777",
-      "name": "Route by Channel",
+      "id": "switch-event",
+      "name": "Switch on Event Type",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 1,
-      "position": [400, 300]
+      "position": [400, 400]
     },
     {
       "parameters": {
-        "webhookUri": "={{$json[\"slack_url\"]}}",
-        "text": "={{$json[\"message\"]}}",
-        "options": {}
+        "jsCode": "const prefs = $('Load Notification Prefs').item?.json?.notification_preferences || {};\nconst context = $('Execute Workflow Trigger').item.json.context_data || {};\n\nconst slackMsg = `🚨 *Escalation Needed* [${context.priority}]\\n*Phone:* ${context.phone}\\n*Reason:* ${context.reason}\\n<https://admin.zovira.com/conversations/${context.conversation_id}|View Conversation>`;\nconst telegramMsg = `🚨 Escalation Needed [${context.priority}]\\nPhone: ${context.phone}\\nReason: ${context.reason}`;\n\nreturn {\n  slack_enabled: prefs.slack_enabled !== false,\n  telegram_enabled: prefs.telegram_enabled === true,\n  email_enabled: context.priority === 'high' || context.priority === 'critical',\n  sms_enabled: context.priority === 'critical',\n  slack_payload: slackMsg,\n  telegram_payload: telegramMsg,\n  email_subject: `URGENT: Escalation for ${context.phone}`,\n  sms_payload: `URGENT: Escalation ${context.reason}. Reply needed.`\n};"
       },
-      "id": "z3a4b5c6-3333-4444-5555-666677778888",
-      "name": "Send Slack Alert",
+      "id": "format-escalation",
+      "name": "Format Escalation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [700, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.slack_enabled }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-slack",
+      "name": "IF Slack Enabled",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [900, 100]
+    },
+    {
+      "parameters": {
+        "webhookUri": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "text": "={{ $json.slack_payload }}"
+      },
+      "id": "send-slack",
+      "name": "Send Slack",
       "type": "n8n-nodes-base.slack",
-      "typeVersion": 2,
-      "position": [600, 200],
-      "credentials": {
-        "slackApi": {
-          "id": "SLACK_CREDENTIALS",
-          "name": "Slack Account"
-        }
-      }
+      "typeVersion": 1,
+      "position": [1100, 0],
+      "continueOnFail": true
     },
     {
       "parameters": {
-        "fromEmail": "notifications@agent.local",
-        "toEmail": "={{$json[\"email_address\"]}}",
-        "subject": "={{$json[\"subject\"]}}",
-        "text": "={{$json[\"message\"]}}",
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.error != null }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-slack-fail",
+      "name": "IF Slack Failed",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1300, 0]
+    },
+    {
+      "parameters": {
+        "operation": "execute",
+        "command": "={{ 'LPUSH audit_logs \"WARNING: Slack webhook failed. Falling back to email.\"' }}"
+      },
+      "id": "slack-fallback-log",
+      "name": "Log Slack Failure",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [1500, -100],
+      "credentials": { "redis": { "id": "REDIS_CREDENTIALS", "name": "Redis account" } }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $('Format Escalation').item.json.telegram_enabled }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-telegram",
+      "name": "IF Telegram Enabled",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "text": "={{ $('Format Escalation').item.json.telegram_payload }}"
+      },
+      "id": "send-telegram",
+      "name": "Send Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [1100, 200],
+      "credentials": { "telegramApi": { "id": "TELEGRAM_CREDENTIALS", "name": "Telegram Bot API" } }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $('Format Escalation').item.json.email_enabled || $('IF Slack Failed').item?.json?.error != null }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-email",
+      "name": "IF Email Needed (or Fallback)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1600, 100]
+    },
+    {
+      "parameters": {
+        "fromEmail": "alerts@zovira.com",
+        "toEmail": "admin@zovira.com",
+        "subject": "={{ $('Format Escalation').item.json.email_subject }}",
+        "text": "={{ $('Format Escalation').item.json.telegram_payload }}"
+      },
+      "id": "send-email",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 1,
+      "position": [1800, 0],
+      "credentials": { "smtp": { "id": "SMTP_CREDENTIALS", "name": "SMTP Account" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COUNT(*) as conv_count FROM conversations WHERE created_at > NOW() - INTERVAL '24 hours';",
         "options": {}
       },
-      "id": "a4b5c6d7-4444-5555-6666-777788889999",
-      "name": "Send Email Alert",
-      "type": "n8n-nodes-base.emailSend",
-      "typeVersion": 2,
-      "position": [600, 400],
-      "credentials": {
-        "smtp": {
-          "id": "SMTP_CREDENTIALS",
-          "name": "SMTP Account"
+      "id": "query-daily",
+      "name": "Query Daily Stats",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.1,
+      "position": [700, 600],
+      "continueOnFail": true,
+      "credentials": { "postgres": { "id": "POSTGRES_CREDENTIALS", "name": "Postgres Account" } }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.error != null }}",
+              "value2": true
+            }
+          ]
         }
-      }
+      },
+      "id": "if-daily-timeout",
+      "name": "IF Query Timeout",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [900, 600]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COUNT(*) as conv_count FROM conversations WHERE created_at > NOW() - INTERVAL '6 hours';",
+        "options": {}
+      },
+      "id": "query-daily-retry",
+      "name": "Retry Query (6 hours)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.1,
+      "position": [1100, 500],
+      "credentials": { "postgres": { "id": "POSTGRES_CREDENTIALS", "name": "Postgres Account" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const count = $input.item.json.conv_count || 0;\nconst isPartial = $('IF Query Timeout').item.json.error != null;\nconst title = isPartial ? '[PARTIAL] Daily Summary' : 'Daily Summary';\nconst body = `Conversations: ${count}\\nNote: ${isPartial ? 'Data limited to last 6 hours due to DB load.' : ''}`;\nreturn { title, body };"
+      },
+      "id": "format-daily",
+      "name": "Format Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [1300, 600]
+    },
+    {
+      "parameters": {
+        "fromEmail": "reports@zovira.com",
+        "toEmail": "admin@zovira.com",
+        "subject": "={{ $json.title }}",
+        "text": "={{ $json.body }}"
+      },
+      "id": "send-email-daily",
+      "name": "Send Summary Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 1,
+      "position": [1500, 600],
+      "credentials": { "smtp": { "id": "SMTP_CREDENTIALS", "name": "SMTP Account" } }
     }
   ],
   "connections": {
@@ -76,25 +255,197 @@
       "main": [
         [
           {
-            "node": "Route by Channel",
+            "node": "Load Notification Prefs",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Route by Channel": {
+    "Load Notification Prefs": {
       "main": [
         [
           {
-            "node": "Send Slack Alert",
+            "node": "Switch on Event Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch on Event Type": {
+      "main": [
+        [
+          {
+            "node": "Format Escalation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [],
+        [
+          {
+            "node": "Query Daily Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Escalation": {
+      "main": [
+        [
+          {
+            "node": "IF Slack Enabled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Slack Enabled": {
+      "main": [
+        [
+          {
+            "node": "Send Slack",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Send Email Alert",
+            "node": "IF Telegram Enabled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Slack": {
+      "main": [
+        [
+          {
+            "node": "IF Slack Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Slack Failed": {
+      "main": [
+        [
+          {
+            "node": "Log Slack Failure",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF Telegram Enabled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Slack Failure": {
+      "main": [
+        [
+          {
+            "node": "IF Telegram Enabled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Telegram Enabled": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF Email Needed (or Fallback)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Telegram": {
+      "main": [
+        [
+          {
+            "node": "IF Email Needed (or Fallback)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Email Needed (or Fallback)": {
+      "main": [
+        [
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Daily Stats": {
+      "main": [
+        [
+          {
+            "node": "IF Query Timeout",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Query Timeout": {
+      "main": [
+        [
+          {
+            "node": "Retry Query (6 hours)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry Query (6 hours)": {
+      "main": [
+        [
+          {
+            "node": "Format Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Summary": {
+      "main": [
+        [
+          {
+            "node": "Send Summary Email",
             "type": "main",
             "index": 0
           }
