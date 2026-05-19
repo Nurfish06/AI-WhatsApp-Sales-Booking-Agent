@@ -646,4 +646,4 @@ Logs (Postgres): SELECT * FROM system_logs ORDER BY created_at DESC;
 
 ---
 
-*Last updated: 2026-05-19 | Maintained by the AI WhatsApp Agent team*
+*Last updated: 2026-05-19 | Maintained by the AI WhatsApp Agent Developer Nurahmed*
