@@ -1,0 +1,99 @@
+{
+  "name": "09_Data_Retention_Policy",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 2 * * *"
+            }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Schedule (Nightly 2 AM)",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE conversations SET status = 'anonymized', customer_phone = 'REDACTED', metadata = metadata - 'pii_fields' WHERE status = 'inactive' AND updated_at < NOW() - INTERVAL '90 days' RETURNING id;",
+        "options": {}
+      },
+      "id": "anonymize-old-conversations",
+      "name": "Anonymize Old Conversations",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.rowCount }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "check-if-anonymized",
+      "name": "Check If Anonymized",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "operation": "execute",
+        "command": "={{ 'LPUSH audit_logs \"Data Retention Task Executed: Anonymized ' + $json.rowCount + ' conversations\"' }}"
+      },
+      "id": "log-to-redis",
+      "name": "Log to Redis Audit",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [850, 300]
+    }
+  ],
+  "connections": {
+    "Schedule (Nightly 2 AM)": {
+      "main": [
+        [
+          {
+            "node": "Anonymize Old Conversations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anonymize Old Conversations": {
+      "main": [
+        [
+          {
+            "node": "Check If Anonymized",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check If Anonymized": {
+      "main": [
+        [
+          {
+            "node": "Log to Redis Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {}
+}

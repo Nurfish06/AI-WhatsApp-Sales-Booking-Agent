@@ -5,41 +5,450 @@
       "parameters": {
         "httpMethod": "POST",
         "path": "twilio-inbound",
+        "responseMode": "lastNode",
         "options": {}
       },
-      "id": "e98e2dc4-1b12-421a-8c7e-1234567890ab",
+      "id": "webhook-inbound",
       "name": "Twilio Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
-      "position": [250, 300],
+      "position": [
+        0,
+        300
+      ],
       "webhookId": "twilio-inbound-webhook"
     },
     {
       "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT * FROM clients WHERE twilio_number = $1 AND is_active = true;",
-        "options": {}
+        "jsCode": "const headers = $input.item.json.headers;\nconst signature = headers['x-twilio-signature'];\n// In production, compute HMAC-SHA256 with Twilio Auth Token\n// return { isValid: computed === signature };\nreturn { isValid: !!signature };"
       },
-      "id": "d1c2b3a4-5678-90ab-cdef-1234567890ab",
-      "name": "Lookup Client",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.1,
-      "position": [450, 300]
+      "id": "validate-sig",
+      "name": "Validate Signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ]
     },
     {
       "parameters": {
-        "workflowId": "REPLACE_WITH_CONVERSATION_ENGINE_ID"
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.isValid }}",
+              "value2": true
+            }
+          ]
+        }
       },
-      "id": "f8a9b0c1-2345-6789-abcd-1234567890ab",
+      "id": "if-sig-valid",
+      "name": "IF Signature Valid",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "Forbidden",
+        "options": {
+          "responseCode": 403
+        }
+      },
+      "id": "respond-403",
+      "name": "Respond 403",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        600,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "execute",
+        "command": "={{ 'LPUSH audit_logs \"WARNING: Invalid Twilio Signature detected from IP ' + $('Twilio Webhook').item.json.headers['x-forwarded-for'] + '\"' }}"
+      },
+      "id": "log-invalid-sig",
+      "name": "Log Invalid Sig",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        800,
+        100
+      ],
+      "credentials": {
+        "redis": {
+          "id": "REDIS_CREDENTIALS",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "execute",
+        "command": "=INCR rate_limit:{{ $('Twilio Webhook').item.json.body.From }}"
+      },
+      "id": "redis-rate-limit",
+      "name": "Redis Rate Limit INCR",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        600,
+        400
+      ],
+      "credentials": {
+        "redis": {
+          "id": "REDIS_CREDENTIALS",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "execute",
+        "command": "=EXPIRE rate_limit:{{ $('Twilio Webhook').item.json.body.From }} 60"
+      },
+      "id": "redis-rate-limit-expire",
+      "name": "Redis Rate Limit EXPIRE",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        800,
+        400
+      ],
+      "credentials": {
+        "redis": {
+          "id": "REDIS_CREDENTIALS",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $('Redis Rate Limit INCR').item.json.result }}",
+              "operation": "larger",
+              "value2": 15
+            }
+          ]
+        }
+      },
+      "id": "if-rate-limit",
+      "name": "IF Rate Limit Exceeded",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM clients WHERE twilio_number = $1 AND is_active = true LIMIT 1;",
+        "additionalFields": {
+          "queryParams": "={{ $('Twilio Webhook').item.json.body.To }}"
+        }
+      },
+      "id": "lookup-client",
+      "name": "Lookup Client",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.1,
+      "position": [
+        1200,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIALS",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.id ? 1 : 0 }}",
+              "operation": "equal",
+              "value2": 1
+            }
+          ]
+        }
+      },
+      "id": "if-client-found",
+      "name": "IF Client Found",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1400,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "execute",
+        "command": "={{ 'LPUSH audit_logs \"CRITICAL: Message received for unknown/inactive client number: ' + $('Twilio Webhook').item.json.body.To + '\"' }}"
+      },
+      "id": "log-unknown-client",
+      "name": "Log Unknown Client",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        1600,
+        300
+      ],
+      "credentials": {
+        "redis": {
+          "id": "REDIS_CREDENTIALS",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": "REPLACE_WITH_NOTIFICATION_SERVICE_ID",
+        "mode": "fireAndForget"
+      },
+      "id": "alert-admin-unknown-client",
+      "name": "Alert Admin (Notification Service)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        1800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "OK",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-200-fallback",
+      "name": "Respond 200 (Stop)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        2000,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM conversations WHERE customer_phone = $1 AND client_id = $2 AND status = 'active' LIMIT 1;",
+        "additionalFields": {
+          "queryParams": "={{ $('Twilio Webhook').item.json.body.From }},{{ $('Lookup Client').item.json.id }}"
+        }
+      },
+      "id": "lookup-conv",
+      "name": "Lookup Conversation",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.1,
+      "position": [
+        1600,
+        600
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIALS",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.id ? 1 : 0 }}",
+              "operation": "equal",
+              "value2": 1
+            }
+          ]
+        }
+      },
+      "id": "if-conv-found",
+      "name": "IF Active Conv Found",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1800,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO conversations (client_id, customer_phone, status, stage) VALUES ($1, $2, 'active', 'greeting') RETURNING *;",
+        "additionalFields": {
+          "queryParams": "={{ $('Lookup Client').item.json.id }},{{ $('Twilio Webhook').item.json.body.From }}"
+        }
+      },
+      "id": "create-conv",
+      "name": "Create Conversation",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.1,
+      "position": [
+        2000,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIALS",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM client_configs WHERE client_id = $1;",
+        "additionalFields": {
+          "queryParams": "={{ $('Lookup Client').item.json.id }}"
+        }
+      },
+      "id": "load-config",
+      "name": "Load Client Config",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.1,
+      "position": [
+        2200,
+        600
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIALS",
+          "name": "Postgres Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": "REPLACE_WITH_CONVERSATION_ENGINE_ID",
+        "mode": "fireAndForget"
+      },
+      "id": "exec-conv-engine",
       "name": "Execute Conversation Engine",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1,
-      "position": [650, 300]
+      "position": [
+        2400,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "OK",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-200-success",
+      "name": "Respond 200 (Success)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        2600,
+        600
+      ]
     }
   ],
   "connections": {
     "Twilio Webhook": {
       "main": [
+        [
+          {
+            "node": "Validate Signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Signature": {
+      "main": [
+        [
+          {
+            "node": "IF Signature Valid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Signature Valid": {
+      "main": [
+        [
+          {
+            "node": "Redis Rate Limit INCR",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 403",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond 403": {
+      "main": [
+        [
+          {
+            "node": "Log Invalid Sig",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis Rate Limit INCR": {
+      "main": [
+        [
+          {
+            "node": "Redis Rate Limit EXPIRE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis Rate Limit EXPIRE": {
+      "main": [
+        [
+          {
+            "node": "IF Rate Limit Exceeded",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Rate Limit Exceeded": {
+      "main": [
+        [
+          {
+            "node": "Respond 200 (Stop)",
+            "type": "main",
+            "index": 0
+          }
+        ],
         [
           {
             "node": "Lookup Client",
@@ -53,7 +462,109 @@
       "main": [
         [
           {
+            "node": "IF Client Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Client Found": {
+      "main": [
+        [
+          {
+            "node": "Lookup Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Unknown Client",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Unknown Client": {
+      "main": [
+        [
+          {
+            "node": "Alert Admin (Notification Service)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert Admin (Notification Service)": {
+      "main": [
+        [
+          {
+            "node": "Respond 200 (Stop)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lookup Conversation": {
+      "main": [
+        [
+          {
+            "node": "IF Active Conv Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Active Conv Found": {
+      "main": [
+        [
+          {
+            "node": "Load Config",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Conversation": {
+      "main": [
+        [
+          {
+            "node": "Load Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Config": {
+      "main": [
+        [
+          {
             "node": "Execute Conversation Engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Conversation Engine": {
+      "main": [
+        [
+          {
+            "node": "Respond 200 (Success)",
             "type": "main",
             "index": 0
           }

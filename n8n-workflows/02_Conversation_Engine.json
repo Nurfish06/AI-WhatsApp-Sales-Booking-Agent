@@ -3,9 +3,19 @@
   "nodes": [
     {
       "parameters": {},
-      "id": "a1b2c3d4-1111-2222-3333-444455556666",
+      "id": "trigger",
       "name": "Execute Workflow Trigger",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const config = $input.item.json.client_config || {};\nconst history = $input.item.json.history || [];\nconst message = $input.item.json.message || \"\";\n\n// Assemble system prompt\nlet systemPrompt = `You are a helpful AI assistant for ${config.business_name || 'our business'}.\\n`;\nsystemPrompt += `Tone: ${config.brand_voice || 'Professional and friendly'}.\\n`;\nsystemPrompt += `Your goal is to classify intent, extract entities, and respond appropriately.\\n`;\nsystemPrompt += `Always return valid JSON containing: intent, sentiment, confidence, reply, next_stage, escalation_needed.\\n`;\n\nreturn {\n  system_prompt: systemPrompt,\n  user_message: message,\n  history: history\n};"
+      },
+      "id": "assemble-prompt",
+      "name": "Assemble Prompt",
+      "type": "n8n-nodes-base.code",
       "typeVersion": 1,
       "position": [200, 300]
     },
@@ -16,17 +26,32 @@
         "model": "gpt-4o",
         "options": {
           "temperature": 0.3,
-          "maxTokens": 300,
           "responseFormat": {
             "type": "json_object"
           }
+        },
+        "messages": {
+          "messageValues": [
+            {
+              "role": "system",
+              "content": "={{ $json.system_prompt }}"
+            },
+            {
+              "role": "user",
+              "content": "={{ $json.user_message }}"
+            }
+          ]
         }
       },
-      "id": "b2c3d4e5-2222-3333-4444-555566667777",
-      "name": "OpenAI Chat",
+      "id": "openai-primary",
+      "name": "OpenAI API (Temp 0.3)",
       "type": "n8n-nodes-base.openAi",
       "typeVersion": 1,
       "position": [400, 300],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "continueOnFail": true,
       "credentials": {
         "openAiApi": {
           "id": "OPENAI_CREDENTIALS",
@@ -36,41 +61,141 @@
     },
     {
       "parameters": {
-        "operation": "executeQuery",
-        "query": "INSERT INTO messages (conversation_id, direction, message_body, ai_intent) VALUES ($1, 'outbound', $2, $3);",
-        "options": {}
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.error != null }}",
+              "value2": true
+            }
+          ]
+        }
       },
-      "id": "c3d4e5f6-3333-4444-5555-666677778888",
-      "name": "Save AI Response",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.1,
-      "position": [600, 300],
+      "id": "if-api-error",
+      "name": "IF API Error / Timeout",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "return {\n  intent: \"error_recovery\",\n  sentiment: \"neutral\",\n  confidence: 0.0,\n  reply: \"I'm experiencing a brief technical delay. Let me connect you with our team who can help right away.\",\n  next_stage: \"escalated\",\n  escalation_needed: true,\n  escalation_reason: \"openai_api_failure\"\n};"
+      },
+      "id": "fallback-api-error",
+      "name": "Fallback: API Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [800, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "try {\n  const rawContent = $input.item.json.message.content;\n  const parsed = JSON.parse(rawContent);\n  // Basic validation\n  if (parsed.reply && parsed.intent) {\n    parsed.isValid = true;\n    return parsed;\n  }\n} catch (e) {}\nreturn { isValid: false, raw: $input.item.json.message?.content };"
+      },
+      "id": "parse-validate",
+      "name": "Parse & Validate JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [800, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.isValid }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-valid",
+      "name": "IF Valid JSON",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1000, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.item.json;"
+      },
+      "id": "return-clean",
+      "name": "Return Clean Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "operation": "create",
+        "model": "gpt-4o",
+        "options": {
+          "temperature": 0,
+          "responseFormat": {
+            "type": "json_object"
+          }
+        },
+        "messages": {
+          "messageValues": [
+            {
+              "role": "system",
+              "content": "={{ $('Assemble Prompt').item.json.system_prompt }}\\nCRITICAL: You MUST return strictly valid JSON."
+            },
+            {
+              "role": "user",
+              "content": "={{ $('Assemble Prompt').item.json.user_message }}"
+            }
+          ]
+        }
+      },
+      "id": "openai-retry",
+      "name": "OpenAI Retry (Temp 0)",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [1200, 500],
+      "continueOnFail": true,
       "credentials": {
-        "postgres": {
-          "id": "POSTGRES_CREDENTIALS",
-          "name": "Postgres Account"
+        "openAiApi": {
+          "id": "OPENAI_CREDENTIALS",
+          "name": "OpenAI Account"
         }
       }
     },
     {
       "parameters": {
-        "resource": "message",
-        "operation": "send",
-        "to": "={{$json[\"customer_phone\"]}}",
-        "from": "={{$json[\"twilio_number\"]}}",
-        "body": "={{$json[\"reply\"]}}"
+        "jsCode": "try {\n  const rawContent = $input.item.json.message.content;\n  const parsed = JSON.parse(rawContent);\n  if (parsed.reply && parsed.intent) {\n    parsed.isValid = true;\n    return parsed;\n  }\n} catch (e) {}\nreturn { isValid: false };"
       },
-      "id": "d4e5f6g7-4444-5555-6666-777788889999",
-      "name": "Send via Twilio",
-      "type": "n8n-nodes-base.twilio",
+      "id": "parse-validate-retry",
+      "name": "Parse & Validate Retry",
+      "type": "n8n-nodes-base.code",
       "typeVersion": 1,
-      "position": [800, 300],
-      "credentials": {
-        "twilioApi": {
-          "id": "TWILIO_CREDENTIALS",
-          "name": "Twilio Account"
+      "position": [1400, 500]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.isValid }}",
+              "value2": true
+            }
+          ]
         }
-      }
+      },
+      "id": "if-valid-retry",
+      "name": "IF Valid Retry",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1600, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "return {\n  intent: \"error_recovery\",\n  sentiment: \"neutral\",\n  confidence: 0.0,\n  reply: \"I'm having a little trouble understanding that right now. Let me connect you with my team to assist you properly.\",\n  next_stage: \"escalated\",\n  escalation_needed: true,\n  escalation_reason: \"ai_response_parse_failure\"\n};"
+      },
+      "id": "fallback-parse-error",
+      "name": "Fallback: Parse Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [1800, 600]
     }
   ],
   "connections": {
@@ -78,29 +203,116 @@
       "main": [
         [
           {
-            "node": "OpenAI Chat",
+            "node": "Assemble Prompt",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "OpenAI Chat": {
+    "Assemble Prompt": {
       "main": [
         [
           {
-            "node": "Save AI Response",
+            "node": "OpenAI API (Temp 0.3)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Save AI Response": {
+    "OpenAI API (Temp 0.3)": {
       "main": [
         [
           {
-            "node": "Send via Twilio",
+            "node": "IF API Error / Timeout",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF API Error / Timeout": {
+      "main": [
+        [
+          {
+            "node": "Fallback: API Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Parse & Validate JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Validate JSON": {
+      "main": [
+        [
+          {
+            "node": "IF Valid JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Valid JSON": {
+      "main": [
+        [
+          {
+            "node": "Return Clean Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "OpenAI Retry (Temp 0)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Retry (Temp 0)": {
+      "main": [
+        [
+          {
+            "node": "Parse & Validate Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Validate Retry": {
+      "main": [
+        [
+          {
+            "node": "IF Valid Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Valid Retry": {
+      "main": [
+        [
+          {
+            "node": "Return Clean Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fallback: Parse Error",
             "type": "main",
             "index": 0
           }
