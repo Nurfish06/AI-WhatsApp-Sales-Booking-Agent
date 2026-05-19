@@ -12,30 +12,38 @@
           ]
         }
       },
-      "id": "b5c6d7e8-1111-2222-3333-444455556666",
-      "name": "Schedule Trigger (5m)",
+      "id": "trigger",
+      "name": "Schedule Trigger",
       "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.1,
-      "position": [200, 300]
+      "typeVersion": 1,
+      "position": [0, 400]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT 1 as health_check;",
+        "query": "SELECT 1;",
         "options": {}
       },
-      "id": "c6d7e8f9-2222-3333-4444-555566667777",
+      "id": "ping-postgres",
       "name": "Ping Postgres",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.1,
-      "position": [400, 300],
-      "credentials": {
-        "postgres": {
-          "id": "POSTGRES_CREDENTIALS",
-          "name": "Postgres Account"
-        }
+      "position": [200, 200],
+      "continueOnFail": true,
+      "credentials": { "postgres": { "id": "POSTGRES_CREDENTIALS", "name": "Postgres Account" } }
+    },
+    {
+      "parameters": {
+        "operation": "execute",
+        "command": "PING"
       },
-      "onError": "continueErrorOutput"
+      "id": "ping-redis",
+      "name": "Ping Redis",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [400, 200],
+      "continueOnFail": true,
+      "credentials": { "redis": { "id": "REDIS_CREDENTIALS", "name": "Redis account" } }
     },
     {
       "parameters": {
@@ -44,49 +52,196 @@
         "genericAuthType": "httpHeaderAuth",
         "options": {}
       },
-      "id": "d7e8f9g0-3333-4444-5555-666677778888",
+      "id": "ping-openai",
       "name": "Ping OpenAI",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [600, 300],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "OPENAI_API_HEADER",
-          "name": "OpenAI Auth Header"
-        }
+      "position": [600, 200],
+      "continueOnFail": true,
+      "credentials": { "httpHeaderAuth": { "id": "OPENAI_AUTH", "name": "OpenAI Header Auth" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const pgError = $('Ping Postgres').item.json.error;\nconst redisError = $('Ping Redis').item.json.error;\nconst aiError = $('Ping OpenAI').item.json.error;\n\nconst isHealthy = !pgError && !redisError && !aiError;\nconst redisDown = !!redisError;\n\nlet errors = [];\nif (pgError) errors.push('Postgres');\nif (redisError) errors.push('Redis');\nif (aiError) errors.push('OpenAI');\n\nreturn { isHealthy, redisDown, failed_services: errors.join(', ') };"
       },
-      "onError": "continueErrorOutput"
+      "id": "check-health",
+      "name": "Evaluate Health",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [800, 200]
     },
     {
       "parameters": {
         "conditions": {
           "boolean": [
             {
-              "value1": "={{$json[\"error\"] ? true : false}}",
+              "value1": "={{ $json.isHealthy }}",
               "value2": true
             }
           ]
         }
       },
-      "id": "e8f9g0h1-4444-5555-6666-777788889999",
-      "name": "Check Failures",
+      "id": "if-healthy",
+      "name": "IF Healthy",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
-      "position": [800, 300]
+      "position": [1000, 200]
     },
     {
       "parameters": {
-        "workflowId": "REPLACE_WITH_NOTIFICATION_SERVICE_ID"
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.redisDown }}",
+              "value2": true
+            }
+          ]
+        }
       },
-      "id": "f9g0h1i2-5555-6666-7777-888899990000",
-      "name": "Trigger Notification",
+      "id": "if-redis-down",
+      "name": "IF Redis Down",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1200, 100]
+    },
+    {
+      "parameters": {
+        "fromEmail": "alerts@zovira.com",
+        "toEmail": "devops@zovira.com",
+        "subject": "CRITICAL: Redis is DOWN in Production",
+        "text": "Redis is unreachable. Notification Service cannot be used. Immediate manual intervention required."
+      },
+      "id": "direct-email",
+      "name": "Direct Admin Email (Fallback)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 1,
+      "position": [1400, 0],
+      "credentials": { "smtp": { "id": "SMTP_CREDENTIALS", "name": "SMTP Account" } }
+    },
+    {
+      "parameters": {
+        "workflowId": "REPLACE_WITH_NOTIFICATION_SERVICE_ID",
+        "mode": "waitForResult",
+        "options": {}
+      },
+      "id": "notify-error",
+      "name": "Notify System Error",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1,
-      "position": [1000, 200]
+      "position": [1400, 200]
+    },
+    {
+      "parameters": {
+        "operation": "execute",
+        "command": "LRANGE audit_logs 0 49"
+      },
+      "id": "get-logs",
+      "name": "Get Audit Logs",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [1200, 400],
+      "credentials": { "redis": { "id": "REDIS_CREDENTIALS", "name": "Redis account" } }
+    },
+    {
+      "parameters": {
+        "operation": "execute",
+        "command": "LTRIM audit_logs 50 -1"
+      },
+      "id": "trim-logs",
+      "name": "Trim Redis Logs",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [1400, 400],
+      "credentials": { "redis": { "id": "REDIS_CREDENTIALS", "name": "Redis account" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO system_logs (log_entry) VALUES ($1);",
+        "additionalFields": {
+          "queryParams": "={{ $json.data }}"
+        }
+      },
+      "id": "insert-logs",
+      "name": "Batch Insert Logs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.1,
+      "position": [1600, 400],
+      "credentials": { "postgres": { "id": "POSTGRES_CREDENTIALS", "name": "Postgres Account" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM dead_letter_queue WHERE status = 'pending' AND retry_count < 5;",
+        "options": {}
+      },
+      "id": "query-dlq",
+      "name": "Query Pending DLQ",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.1,
+      "position": [1200, 600],
+      "credentials": { "postgres": { "id": "POSTGRES_CREDENTIALS", "name": "Postgres Account" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $('Query Pending DLQ').all();\nif (!items || items.length === 0) return [];\nreturn items.map(i => { return { id: i.json.id, retry_count: i.json.retry_count + 1 }; });"
+      },
+      "id": "process-dlq",
+      "name": "Process DLQ Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [1400, 600]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.retry_count >= 5 }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-dlq-fail",
+      "name": "IF Retry >= 5",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1600, 600]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE dead_letter_queue SET status = 'requires_manual_intervention' WHERE id = $1;",
+        "additionalFields": {
+          "queryParams": "={{ $json.id }}"
+        }
+      },
+      "id": "mark-manual",
+      "name": "Mark Requires Manual Intervention",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.1,
+      "position": [1800, 500],
+      "credentials": { "postgres": { "id": "POSTGRES_CREDENTIALS", "name": "Postgres Account" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE dead_letter_queue SET retry_count = $2 WHERE id = $1;",
+        "additionalFields": {
+          "queryParams": "={{ $json.id }},{{ $json.retry_count }}"
+        }
+      },
+      "id": "update-retry",
+      "name": "Update Retry Count",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.1,
+      "position": [1800, 700],
+      "credentials": { "postgres": { "id": "POSTGRES_CREDENTIALS", "name": "Postgres Account" } }
     }
   ],
   "connections": {
-    "Schedule Trigger (5m)": {
+    "Schedule Trigger": {
       "main": [
         [
           {
@@ -101,13 +256,15 @@
       "main": [
         [
           {
-            "node": "Ping OpenAI",
+            "node": "Ping Redis",
             "type": "main",
             "index": 0
           }
         ]
-      ],
-      "error": [
+      ]
+    },
+    "Ping Redis": {
+      "main": [
         [
           {
             "node": "Ping OpenAI",
@@ -121,27 +278,121 @@
       "main": [
         [
           {
-            "node": "Check Failures",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ],
-      "error": [
-        [
-          {
-            "node": "Check Failures",
+            "node": "Evaluate Health",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Check Failures": {
+    "Evaluate Health": {
       "main": [
         [
           {
-            "node": "Trigger Notification",
+            "node": "IF Healthy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Healthy": {
+      "main": [
+        [
+          {
+            "node": "Get Audit Logs",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Query Pending DLQ",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF Redis Down",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Redis Down": {
+      "main": [
+        [
+          {
+            "node": "Direct Admin Email (Fallback)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify System Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Audit Logs": {
+      "main": [
+        [
+          {
+            "node": "Trim Redis Logs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trim Redis Logs": {
+      "main": [
+        [
+          {
+            "node": "Batch Insert Logs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Pending DLQ": {
+      "main": [
+        [
+          {
+            "node": "Process DLQ Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process DLQ Items": {
+      "main": [
+        [
+          {
+            "node": "IF Retry >= 5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Retry >= 5": {
+      "main": [
+        [
+          {
+            "node": "Mark Requires Manual Intervention",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Retry Count",
             "type": "main",
             "index": 0
           }

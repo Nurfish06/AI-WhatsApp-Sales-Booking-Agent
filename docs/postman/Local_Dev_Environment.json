@@ -1,0 +1,14 @@
+{
+  "id": "wa-agent-local-env",
+  "name": "AI WhatsApp Agent — Local Dev",
+  "values": [
+    { "key": "base_url", "value": "http://localhost:5678", "enabled": true },
+    { "key": "webhook_path", "value": "/api/whatsapp/webhook", "enabled": true },
+    { "key": "valid_test_signature", "value": "REPLACE_WITH_COMPUTED_HMAC_SHA1", "enabled": true,
+      "description": "Compute: HMAC-SHA1(TWILIO_AUTH_TOKEN, full_webhook_url + sorted_params). Use the n8n test helper or Twilio helper library." },
+    { "key": "test_phone_from", "value": "whatsapp:+971501234567", "enabled": true },
+    { "key": "test_phone_to", "value": "whatsapp:+12025550001", "enabled": true,
+      "description": "Your Twilio WhatsApp sandbox number." }
+  ],
+  "_postman_variable_scope": "environment"
+}

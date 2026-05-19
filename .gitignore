@@ -56,6 +56,7 @@ build/
 docs/*
 !docs/postman/
 !docs/postman/*
+AGENTS.md
 
 # Database and App Data (Docker volumes)
 n8n_data/
