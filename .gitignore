@@ -56,6 +56,7 @@ build/
 docs/*
 !docs/postman/
 !docs/postman/*
+!docs/DEPLOYMENT_GUIDE.md
 AGENTS.md
 
 # Database and App Data (Docker volumes)
